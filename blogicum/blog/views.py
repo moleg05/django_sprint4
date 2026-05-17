@@ -11,7 +11,8 @@ from django.contrib.auth import logout
 from django.db.models import Count
 
 
-def get_posts_with_comments(queryset=None, filter_published=True, order_by="-pub_date"):
+def get_posts_with_comments(queryset=None, filter_published=True,
+                            order_by="-pub_date"):
     if queryset is None:
         queryset = Post.objects.all()
     if filter_published:
