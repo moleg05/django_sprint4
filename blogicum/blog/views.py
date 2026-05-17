@@ -11,7 +11,7 @@ from django.contrib.auth import logout
 from django.db.models import Count
 
 
-def get_posts_with_comments(queryset=None, filter_published=True):
+def get_posts_with_comments(queryset=None, filter_published=True, order_by="-pub_date"):
     if queryset is None:
         queryset = Post.objects.all()
     if filter_published:
@@ -20,7 +20,10 @@ def get_posts_with_comments(queryset=None, filter_published=True):
             pub_date__lte=timezone.now(),
             category__is_published=True
         )
-    return queryset.annotate(comment_count=Count("comments"))
+    queryset = queryset.annotate(comment_count=Count("comments"))
+    if order_by:
+        queryset = queryset.order_by(order_by)
+    return queryset
 
 
 def paginate_set(request, queryset, per_page=10):
@@ -32,18 +35,19 @@ def paginate_set(request, queryset, per_page=10):
 def profile(request, username):
     user = get_object_or_404(User, username=username)
     if request.user == user:
-        posts = Post.objects.filter(author=user)
-        posts = get_posts_with_comments(posts, filter_published=False)
+        posts = get_posts_with_comments(
+            Post.objects.filter(author=user),
+            filter_published=False,
+            order_by="-pub_date"
+        )
     else:
-        posts = get_posts_with_comments(Post.objects.filter(author=user),
-                                        filter_published=True)
-    posts = posts.order_by("-pub_date")
+        posts = get_posts_with_comments(
+            Post.objects.filter(author=user),
+            filter_published=True,
+            order_by="-pub_date"
+        )
     page_obj = paginate_set(request, posts)
-    context = {
-        "profile": user,
-        "page_obj": page_obj,
-        "user": user,
-    }
+    context = {"profile": user, "page_obj": page_obj, "user": user}
     return render(request, "blog/profile.html", context)
 
 
@@ -69,8 +73,7 @@ def post_detail(request, post_id):
 
 def index(request):
     template_name = "blog/index.html"
-    posts = get_posts_with_comments(Post.objects.all(), filter_published=True)
-    posts = posts.order_by("-pub_date")
+    posts = get_posts_with_comments(order_by="-pub_date")
     page_obj = paginate_set(request, posts)
     context = {"page_obj": page_obj}
     return render(request, template_name, context)
@@ -81,8 +84,8 @@ def category_posts(request, category_slug):
     category = get_object_or_404(Category, slug=category_slug,
                                  is_published=True)
     posts = get_posts_with_comments(Post.objects.filter(category=category),
-                                    filter_published=True)
-    posts = posts.order_by("-pub_date")
+                                    filter_published=True,
+                                    order_by="-pub_date")
     page_obj = paginate_set(request, posts)
     context = {"category": category, "page_obj": page_obj}
     return render(request, template_name, context)
