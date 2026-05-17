@@ -8,19 +8,37 @@ from .forms import PostForm, UserEditForm
 from django.core.paginator import Paginator
 from django.http import Http404
 from django.contrib.auth import logout
+from django.db.models import Count
+
+
+def get_posts_with_comments(queryset=None, filter_published=True):
+    if queryset is None:
+        queryset = Post.objects.all()
+    if filter_published:
+        queryset = queryset.filter(
+            is_published=True,
+            pub_date__lte=timezone.now(),
+            category__is_published=True
+        )
+    return queryset.annotate(comment_count=Count("comments"))
+
+
+def paginate_set(request, queryset, per_page=10):
+    paginator = Paginator(queryset, per_page)
+    page_number = request.GET.get("page")
+    return paginator.get_page(page_number)
 
 
 def profile(request, username):
     user = get_object_or_404(User, username=username)
     if request.user == user:
-        posts = Post.objects.filter(author=user).order_by("-pub_date")
+        posts = Post.objects.filter(author=user)
+        posts = get_posts_with_comments(posts, filter_published=False)
     else:
-        posts = Post.objects.filter(
-            author=user, is_published=True, category__is_published=True
-        ).order_by("-pub_date")
-    paginator = Paginator(posts, 10)
-    page_number = request.GET.get("page")
-    page_obj = paginator.get_page(page_number)
+        posts = get_posts_with_comments(Post.objects.filter(author=user),
+                                        filter_published=True)
+    posts = posts.order_by("-pub_date")
+    page_obj = paginate_set(request, posts)
     context = {
         "profile": user,
         "page_obj": page_obj,
@@ -29,25 +47,18 @@ def profile(request, username):
     return render(request, "blog/profile.html", context)
 
 
-def post_detail(request, id):
+def post_detail(request, post_id):
     template_name = "blog/detail.html"
-    if request.user.is_authenticated:
-        post = get_object_or_404(Post, id=id)
-        if not post.is_published and post.author != request.user:
+    post = get_object_or_404(Post, id=post_id)
+    if post.author != request.user:
+        if (
+            not post.is_published
+            or post.pub_date > timezone.now()
+            or not post.category.is_published
+        ):
             raise Http404("Пост не найден")
-        if post.pub_date > timezone.now() and post.author != request.user:
-            raise Http404("Пост не найден")
-        if not post.category.is_published and post.author != request.user:
-            raise Http404("Пост не найден")
-    else:
-        post = get_object_or_404(
-            Post,
-            id=id,
-            is_published=True,
-            pub_date__lte=timezone.now(),
-            category__is_published=True,
-        )
-    comments = post.comments.select_related("author").order_by("created_at")
+    comments = post.comments.select_related("author")
+    comments = comments.order_by("created_at")
     context = {
         "post": post,
         "comments": comments,
@@ -57,15 +68,10 @@ def post_detail(request, id):
 
 
 def index(request):
-
     template_name = "blog/index.html"
-    posts = Post.objects.filter(
-        is_published=True, pub_date__lte=timezone.now(),
-        category__is_published=True
-    ).order_by("-pub_date")
-    paginator = Paginator(posts, 10)
-    page_number = request.GET.get("page")
-    page_obj = paginator.get_page(page_number)
+    posts = get_posts_with_comments(Post.objects.all(), filter_published=True)
+    posts = posts.order_by("-pub_date")
+    page_obj = paginate_set(request, posts)
     context = {"page_obj": page_obj}
     return render(request, template_name, context)
 
@@ -74,24 +80,21 @@ def category_posts(request, category_slug):
     template_name = "blog/category.html"
     category = get_object_or_404(Category, slug=category_slug,
                                  is_published=True)
-    posts = Post.objects.filter(
-        category=category, is_published=True, pub_date__lte=timezone.now()
-    ).order_by("-pub_date")
-
-    paginator = Paginator(posts, 10)
-    page_number = request.GET.get("page")
-    page_obj = paginator.get_page(page_number)
+    posts = get_posts_with_comments(Post.objects.filter(category=category),
+                                    filter_published=True)
+    posts = posts.order_by("-pub_date")
+    page_obj = paginate_set(request, posts)
     context = {"category": category, "page_obj": page_obj}
     return render(request, template_name, context)
 
 
 @login_required
-def add_comment(request, pk, pk_c=None):
-    post = get_object_or_404(Post, pk=pk)
-    if pk_c is not None:
-        comment = get_object_or_404(Comment, pk=pk_c)
+def add_comment(request, post_id, comment_id=None):
+    post = get_object_or_404(Post, pk=post_id)
+    if comment_id is not None:
+        comment = get_object_or_404(Comment, pk=comment_id)
         if comment.author != request.user:
-            return redirect("blog:post_detail", id=post.id)
+            return redirect("blog:post_detail", post_id=post.id)
         if request.method == "GET":
             form = CommentForm(instance=comment)
             context = {"form": form, "post": post, "comment": comment}
@@ -100,9 +103,7 @@ def add_comment(request, pk, pk_c=None):
             form = CommentForm(request.POST, instance=comment)
             if form.is_valid():
                 form.save()
-                post.comment_count = post.comments.count()
-                post.save(update_fields=['comment_count'])
-                return redirect("blog:post_detail", id=post.id)
+                return redirect("blog:post_detail", post_id=post.id)
             context = {"form": form, "post": post, "comment": comment}
             return render(request, "blog/comment.html", context)
     if request.method == "POST":
@@ -112,20 +113,17 @@ def add_comment(request, pk, pk_c=None):
             comment.author = request.user
             comment.post = post
             comment.save()
-            post.comment_count = post.comments.count()
-            post.save(update_fields=['comment_count'])
-            return redirect("blog:post_detail", id=post.id)
-    return redirect("blog:post_detail", id=post.id)
+            return redirect("blog:post_detail", post_id=post.id)
+    return redirect("blog:post_detail", post_id=post.id)
 
 
 @login_required
-def create_post(request, pk=None):
-    if pk is not None:
-        post = get_object_or_404(Post, pk=pk)
+def create_post(request, post_id=None):
+    if post_id is not None:
+        post = get_object_or_404(Post, pk=post_id)
         if post.author != request.user:
-            return redirect("blog:post_detail", id=post.id)
-        form = PostForm(request.POST or None,
-                        request.FILES or None,
+            return redirect("blog:post_detail", post_id=post.id)
+        form = PostForm(request.POST or None, request.FILES or None,
                         instance=post)
     else:
         post = None
@@ -143,10 +141,10 @@ def create_post(request, pk=None):
 
 
 @login_required
-def delete_post(request, pk):
-    post = get_object_or_404(Post, pk=pk)
+def delete_post(request, post_id):
+    post = get_object_or_404(Post, pk=post_id)
     if post.author != request.user:
-        return redirect("blog:post_detail", id=post.id)
+        return redirect("blog:post_detail", post_id=post.id)
     if request.method == "POST":
         post.delete()
         return redirect("blog:profile", username=request.user.username)
@@ -155,25 +153,22 @@ def delete_post(request, pk):
 
 
 @login_required
-def delete_comment(request, pk, pk_c):
-    comment = get_object_or_404(Comment, pk=pk_c)
+def delete_comment(request, post_id, comment_id):
+    comment = get_object_or_404(Comment, pk=comment_id)
     post = comment.post
     if comment.author != request.user:
-        return redirect("blog:post_detail", id=post.id)
+        return redirect("blog:post_detail", post_id=post.id)
     if request.method == "GET":
         context = {"comment": comment, "post": post}
         return render(request, "blog/comment.html", context)
     if request.method == "POST":
         comment.delete()
-        post.comment_count = post.comments.count()
-        post.save(update_fields=['comment_count'])
-        return redirect("blog:post_detail", id=post.id)
-    return redirect("blog:post_detail", id=post.id)
+        return redirect("blog:post_detail", post_id=post.id)
+    return redirect("blog:post_detail", post_id=post.id)
 
 
 @login_required
 def edit_profile(request, username):
-    """Редактирование профиля пользователя"""
     user = get_object_or_404(User, username=username)
     if request.user != user:
         return redirect("blog:profile", username=username)
@@ -190,5 +185,7 @@ def edit_profile(request, username):
 
 def custom_logout(request):
     logout(request)
-    return render(request, 'registration/logged_out.html')
+    return render(request, "registration/logged_out.html")
+
+
 # Create your views here.

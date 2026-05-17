@@ -50,8 +50,6 @@ class Location(BaseModel):
 class Post(BaseModel):
     title = models.CharField(max_length=256, verbose_name="Заголовок")
     text = models.TextField(verbose_name="Текст")
-    comment_count = models.IntegerField(verbose_name="Количество комментариев",
-                                        default=0)
     pub_date = models.DateTimeField(
         verbose_name="Дата и время публикации",
         help_text="Если установить дату и время в будущем "
@@ -99,3 +97,5 @@ class Comment(models.Model):
 
     class Meta:
         ordering = ("created_at",)
+        verbose_name = "комментарий"
+        verbose_name_plural = "Комментарии"

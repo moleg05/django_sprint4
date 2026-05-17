@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 class PostForm(forms.ModelForm):
     class Meta:
         model = Post
-        fields = ["title", "text", "pub_date", "location", "category", "image"]
+        exclude = ["author"]
         widgets = {
             "pub_date": forms.DateTimeInput(attrs={"type": "datetime-local"}),
             "text": forms.Textarea(attrs={"rows": 5}),
@@ -19,6 +19,7 @@ class PostForm(forms.ModelForm):
             "location": "Местоположение",
             "category": "Категория",
             "image": "Изображение",
+            "is_published": "Опубликовано",
         }
 
 
